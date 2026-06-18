@@ -412,7 +412,8 @@
             <span class="dot" id="cont-in-dot"></span>
           </div>
           <div class="tools">
-            <button class="tool" id="cont-mic" onclick="contToggle()" title="開始/停止連續聆聽">🎤</button>
+            <button class="tool" id="cont-mic" onclick="contToggle()" title="開始/停止連續聆聽（不播音）">🎤</button>
+            <button class="tool wide" id="cont-loop-btn" onclick="contLoopToggle()" title="循環口譯：說話→翻譯→播報語音→自動再收音">🔁 循環</button>
             <button class="tool" onclick="clearBox('cont-input');clearBox('cont-output')" title="清除">🗑️</button>
             <button class="tool" onclick="copyBox('cont-input')" title="複製原文">📋</button>
           </div>
@@ -1161,6 +1162,73 @@ function renderCont(){
   scrollEnd('cont-output');
 }
 
+/* 連續翻譯：循環口譯（說話→翻譯→播報→自動再收音，逐段累積） */
+let contLoopOn=false, contLoopStream=null, contLoopSrc='', contLoopDst='';
+function contLoopToggle(){ contLoopOn ? contLoopStop() : contLoopStart(); }
+async function contLoopStart(){
+  let from=$('cont-from-lang').value, to=$('cont-to-lang').value;
+  if(from==='auto'){ from='zh-TW'; $('cont-from-lang').value='zh-TW'; toast('循環模式請設定來源語言，已預設繁體中文'); }
+  if(baseLang(from)===baseLang(to)){ toast('來源與目標語言相同，請設不同語言','err'); return; }
+  stopAllVoice(); stopSpeak();
+  try{ contLoopStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}}); }
+  catch(e){ toast('需要麥克風權限才能使用循環模式','err'); return; }
+  contLoopOn=true;
+  contLoopSrc=$('cont-input').value.trim(); contLoopDst=$('cont-output').value.trim();
+  const b=$('cont-loop-btn'); b.classList.add('rec'); b.innerHTML='■ 停止';
+  $('cont-mic').disabled=true;
+  toast('連續循環口譯已開始，請說話');
+  contLoopListen();
+}
+function contLoopStop(){
+  contLoopOn=false;
+  if(recog){ try{recog.onend=null;recog.stop();}catch(_){} recog=null; recogMode=null; }
+  if(contLoopStream){ try{contLoopStream.getTracks().forEach(t=>t.stop());}catch(_){} contLoopStream=null; }
+  stopSpeak();
+  const b=$('cont-loop-btn'); if(b){ b.classList.remove('rec'); b.innerHTML='🔁 循環'; }
+  $('cont-mic').disabled=false;
+  setDot('cont-in-dot',''); setDot('cont-out-dot','');
+}
+function contLoopListen(){
+  if(!contLoopOn) return;
+  const r=getRecog(); if(!r){ contLoopStop(); return; }
+  recog=r; recogMode='loop';
+  const from=$('cont-from-lang').value;
+  r.lang=SPEECH_LOCALE[from]||from; r.continuous=false; r.interimResults=true; r.maxAlternatives=1;
+  let got='';
+  r.onstart=()=>{ setDot('cont-in-dot','work'); };
+  r.onresult=(e)=>{
+    let fin='',interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){ const t=e.results[i][0].transcript; e.results[i].isFinal?fin+=t:interim+=t; }
+    $('cont-input').value=(contLoopSrc+(contLoopSrc?'\n':'')+interim).trim(); scrollEnd('cont-input');
+    if(fin) got=fin;
+  };
+  r.onerror=(e)=>{ if(e.error==='not-allowed'){ toast('請允許麥克風權限','err'); contLoopStop(); } };
+  r.onend=async()=>{
+    setDot('cont-in-dot',''); recog=null; recogMode=null;
+    if(!contLoopOn) return;
+    const text=got.trim();
+    if(!text){ setTimeout(()=>{ if(contLoopOn) contLoopListen(); },350); return; }
+    await contLoopProcess(text);
+  };
+  try{ r.start(); }catch(_){ setTimeout(()=>{ if(contLoopOn) contLoopListen(); },350); }
+}
+async function contLoopProcess(text){
+  const from=$('cont-from-lang').value, to=$('cont-to-lang').value;
+  contLoopSrc += (contLoopSrc?'\n':'')+text;
+  $('cont-input').value=contLoopSrc; scrollEnd('cont-input');
+  setDot('cont-out-dot','work');
+  try{
+    const res=await translateBlock(text, from, to);
+    contLoopDst += (contLoopDst?'\n':'')+res;
+    $('cont-output').value=contLoopDst; scrollEnd('cont-output');
+    setDot('cont-out-dot','done',1400);
+    speakRaw(res, $('cont-to-lang').value, ()=>{ if(contLoopOn) setTimeout(contLoopListen,150); });
+  }catch(e){
+    setDot('cont-out-dot','bad',2000); toast('翻譯失敗','err');
+    if(contLoopOn) setTimeout(contLoopListen,500);
+  }
+}
+
 /* 語音轉錄 */
 let trOn=false, trFinal='';
 
@@ -1227,7 +1295,9 @@ function stopAllVoice(){
   if(biStream){ try{biStream.getTracks().forEach(t=>t.stop());}catch(_){} biStream=null; }
   if(loopOn){ loopOn=false; const lb=$('loop-btn'); if(lb){ lb.classList.remove('rec'); lb.innerHTML='🔁 循環'; } }
   if(loopStream){ try{loopStream.getTracks().forEach(t=>t.stop());}catch(_){} loopStream=null; }
-  { const fm=$('from-mic'); if(fm)fm.disabled=false; const bb=$('bi-btn'); if(bb)bb.disabled=false; }
+  if(contLoopOn){ contLoopOn=false; const cb=$('cont-loop-btn'); if(cb){ cb.classList.remove('rec'); cb.innerHTML='🔁 循環'; } }
+  if(contLoopStream){ try{contLoopStream.getTracks().forEach(t=>t.stop());}catch(_){} contLoopStream=null; }
+  { const fm=$('from-mic'); if(fm)fm.disabled=false; const bb=$('bi-btn'); if(bb)bb.disabled=false; const cm=$('cont-mic'); if(cm)cm.disabled=false; }
   if(contLoopTimer){ clearInterval(contLoopTimer); contLoopTimer=null; }
   if(recog){ try{recog.onend=null;recog.stop();}catch(_){}; recog=null; recogMode=null; }
   document.querySelectorAll('.tool.rec').forEach(b=>b.classList.remove('rec'));
