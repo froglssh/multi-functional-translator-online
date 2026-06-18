@@ -181,6 +181,8 @@
   .tool.on{background:var(--brand);color:#fff;border-color:var(--brand)}
   .tool.rec{background:var(--err);color:#fff;border-color:var(--err);animation:bp 1.3s infinite}
   .tool.wide{width:auto;padding:0 14px;gap:7px;font-size:.88rem;font-weight:600}
+  .tool.ai-link{border-color:var(--brand);color:var(--brand-ink);background:var(--brand-soft)}
+  .tool.ai-link:hover{background:var(--brand);color:#fff}
 
   .swap{display:flex;align-items:center;justify-content:center}
   .swap button{
@@ -260,6 +262,8 @@
   .sub-label{font-size:.74rem;font-weight:700;color:var(--ink-faint);margin-bottom:6px;letter-spacing:.03em}
   .sub-text{font-size:1.18rem;line-height:1.6;color:var(--ink);min-height:1.6em;word-break:break-word}
   .sub-block.accent .sub-text{color:var(--brand-ink);font-weight:600}
+  .sub-actions{display:flex;gap:6px;margin-top:10px}
+  .sub-actions .tool{width:38px;height:38px;font-size:1rem}
   .gem-log-wrap{margin-bottom:12px}
   .gem-log-wrap summary{cursor:pointer;font-size:.82rem;color:var(--ink-soft);font-weight:600;user-select:none}
   .gem-log{margin-top:8px;max-height:160px;overflow:auto;background:var(--card-2);border:1px solid var(--line);border-radius:10px;padding:10px;font-family:var(--mono);font-size:.74rem;color:var(--ink-soft);white-space:pre-wrap;line-height:1.5}
@@ -461,6 +465,8 @@
           </div>
           <div class="tools">
             <button class="tool wide" onclick="copyForProofread()" title="複製並附校對提示">📋 複製給 AI 校對</button>
+            <button class="tool wide ai-link" onclick="openAIProofread('chatgpt')" title="複製校對提示並開啟 ChatGPT">💬 ChatGPT ↗</button>
+            <button class="tool wide ai-link" onclick="openAIProofread('gemini')" title="複製校對提示並開啟 Gemini">✨ Gemini ↗</button>
             <button class="tool" onclick="exportTr()" title="匯出 .txt">💾</button>
             <button class="tool" onclick="clearBox('tr-output')" title="清除">🗑️</button>
           </div>
@@ -486,11 +492,17 @@
           </div>
         </div>
         <div class="gem-field">
-          <label>音訊來源</label>
+          <label>音訊來源（輸入）</label>
           <select class="lang" id="gem-source">
             <option value="mic">🎤 麥克風</option>
             <option value="display">🖥️ 分頁／系統音訊</option>
           </select>
+        </div>
+        <div class="gem-field">
+          <label class="lbl-row">聲音輸出裝置
+            <a class="getkey" href="#" onclick="refreshOutputDevices(true);return false;" title="重新整理裝置清單">↻ 更新</a>
+          </label>
+          <select class="lang" id="gem-output"><option value="">🔊 系統預設輸出</option></select>
         </div>
         <div class="gem-field">
           <label>目標語言</label>
@@ -515,10 +527,20 @@
         <div class="sub-block">
           <div class="sub-label">🎙️ 原文（即時辨識）</div>
           <div class="sub-text" id="gem-src">—</div>
+          <div class="sub-actions">
+            <button class="tool" onclick="copyContent('gem-src')" title="複製文字">📋</button>
+            <button class="tool" onclick="downloadText('gem-src','原文辨識')" title="下載純文字檔">💾</button>
+            <button class="tool" onclick="downloadPDF('gem-src','原文（即時辨識）')" title="下載 PDF">📄</button>
+          </div>
         </div>
         <div class="sub-block accent">
           <div class="sub-label">🌐 翻譯</div>
           <div class="sub-text" id="gem-dst">—</div>
+          <div class="sub-actions">
+            <button class="tool" onclick="copyContent('gem-dst')" title="複製文字">📋</button>
+            <button class="tool" onclick="downloadText('gem-dst','翻譯')" title="下載純文字檔">💾</button>
+            <button class="tool" onclick="downloadPDF('gem-dst','翻譯')" title="下載 PDF">📄</button>
+          </div>
         </div>
       </div>
 
@@ -628,6 +650,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const gl=localStorage.getItem('tt_gemlang'); if(gl) $('gem-to-lang').value=gl;
   const gsrc=localStorage.getItem('tt_gemsource'); if(gsrc) $('gem-source').value=gsrc;
   $('gem-source').addEventListener('change',e=>localStorage.setItem('tt_gemsource',e.target.value));
+  // 聲音輸出裝置
+  refreshOutputDevices();
+  $('gem-output').addEventListener('change', applyGemSink);
+  if(navigator.mediaDevices) navigator.mediaDevices.addEventListener?.('devicechange', ()=>refreshOutputDevices());
   $('gem-key').addEventListener('input',e=>localStorage.setItem('tt_gemkey',e.target.value.trim()));
   $('gem-model').addEventListener('change',e=>localStorage.setItem('tt_gemmodel',e.target.value.trim()));
   $('gem-to-lang').addEventListener('change',e=>localStorage.setItem('tt_gemlang',e.target.value));
@@ -1393,6 +1419,28 @@ function setDotEl(d,cls,clearAfter){
   if(clearAfter && cls) setTimeout(()=>d.classList.remove(cls), clearAfter);
 }
 function clearBox(id){ const e=$(id); if(e){ e.value=''; e.dispatchEvent(new Event('input')); } }
+/* 取得任一視窗（textarea 或文字 div）的內容 */
+function elValue(id){ const e=$(id); if(!e) return ''; return (e.value!==undefined && e.tagName!=='DIV') ? e.value : e.textContent; }
+function tstamp(){ return new Date().toLocaleString('zh-TW',{hour12:false}).replace(/[\/:]/g,'-').replace(/[\s,]+/g,'_'); }
+function copyContent(id){ const t=(elValue(id)||'').trim(); if(!t||t==='—'){ toast('沒有可複製的內容','err'); return; } navigator.clipboard.writeText(t).then(()=>toast('已複製到剪貼簿')).catch(()=>toast('複製失敗','err')); }
+function downloadText(id,name){
+  const t=(elValue(id)||'').trim(); if(!t||t==='—'){ toast('沒有可下載的內容','err'); return; }
+  const blob=new Blob([t],{type:'text/plain;charset=utf-8'}); const u=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=u; a.download=`${name}_${tstamp()}.txt`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u); toast('已下載純文字檔');
+}
+function escapeHtml(s){ return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function downloadPDF(id,title){
+  const t=(elValue(id)||'').trim(); if(!t||t==='—'){ toast('沒有可下載的內容','err'); return; }
+  const w=window.open('','_blank'); if(!w){ toast('請允許開啟視窗以列印／儲存 PDF','err'); return; }
+  w.document.write(`<!doctype html><html lang="zh-TW"><head><meta charset="utf-8"><title>${escapeHtml(title)}_${tstamp()}</title>`+
+    `<style>body{font-family:-apple-system,BlinkMacSystemFont,'Noto Sans TC','Segoe UI',sans-serif;line-height:1.9;padding:36px;font-size:16px;color:#1b2030}`+
+    `h1{font-size:18px;margin:0 0 6px}.meta{color:#888;font-size:12px;margin-bottom:18px}.body{white-space:pre-wrap;word-break:break-word}</style></head><body>`+
+    `<h1>${escapeHtml(title)}</h1><div class="meta">${new Date().toLocaleString('zh-TW',{hour12:false})}</div><div class="body">${escapeHtml(t)}</div></body></html>`);
+  w.document.close(); w.focus();
+  setTimeout(()=>{ try{ w.print(); }catch(_){} }, 400);
+  toast('已開啟列印視窗，選「另存為 PDF」即可下載');
+}
 async function copyBox(id){
   const t=$(id).value; if(!t.trim()) return;
   try{ await navigator.clipboard.writeText(t); toast('已複製到剪貼簿'); }
@@ -1401,10 +1449,19 @@ async function copyBox(id){
 function scrollEnd(id){ const e=$(id); if(e)e.scrollTop=e.scrollHeight; }
 function toggleAutoSpeak(){ autoSpeak=!autoSpeak; localStorage.setItem('tt_autospeak',autoSpeak?'1':'0'); $('autospeak-btn').classList.toggle('on',autoSpeak); toast(autoSpeak?'已開啟翻譯後自動朗讀':'已關閉自動朗讀'); }
 
+const PROOFREAD_PROMPT='請將以下逐字稿進行整理：加上標點符號、校正語詞轉錄錯誤、刪除語助詞或重複的語詞、根據上下文自動校正文字內容，並根據整段文字內容與語詞自動分段落。只輸出整理後的結果，不要附上這段提示。';
+function buildProofread(t){ return PROOFREAD_PROMPT+'\n\n----- 逐字稿 -----\n'+t; }
 function copyForProofread(){
   const t=$('tr-output').value.trim(); if(!t){ toast('沒有可複製的文字稿','err'); return; }
-  const prompt=t+'\n\n以上是語音轉文字稿，請協助校對並修正可能的辨識錯誤與標點，但不要更改原意。只輸出校正後的結果，不要附上這段提示。';
-  navigator.clipboard.writeText(prompt).then(()=>toast('已複製文字稿與校對提示')).catch(()=>toast('複製失敗','err'));
+  navigator.clipboard.writeText(buildProofread(t)).then(()=>toast('已複製文字稿與校對提示')).catch(()=>toast('複製失敗','err'));
+}
+function openAIProofread(which){
+  const t=$('tr-output').value.trim(); if(!t){ toast('沒有可校對的文字稿','err'); return; }
+  const url = which==='gemini' ? 'https://gemini.google.com/app' : 'https://chatgpt.com/';
+  navigator.clipboard.writeText(buildProofread(t))
+    .then(()=>toast('已複製文字稿與提示，請在開啟的頁面貼上（Ctrl/⌘+V）'))
+    .catch(()=>toast('已開啟頁面，但複製失敗，請手動複製','err'));
+  window.open(url,'_blank','noopener');
 }
 function exportTr(){
   const t=$('tr-output').value; if(!t.trim()){ toast('沒有可匯出的內容','err'); return; }
@@ -1522,6 +1579,8 @@ async function geminiStart(){
       glog('已取得麥克風');
     }
   }catch(e){ toast('無法取得麥克風權限','err'); glog('取得音訊失敗: '+e.message); return; }
+
+  refreshOutputDevices();   // 取得權限後裝置名稱才會顯示
 
   // 2) 建立 WebSocket
   const url=`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(key)}`;
@@ -1650,8 +1709,30 @@ function b64ToInt16(b64){
   for(let i=0;i<len;i++) bytes[i]=bin.charCodeAt(i);
   return new Int16Array(bytes.buffer);
 }
+/* 聲音輸出裝置選擇（喇叭／耳機等，可與輸入裝置不同） */
+async function refreshOutputDevices(notify){
+  const sel=$('gem-output'); if(!sel) return;
+  let devs=[]; try{ devs=await navigator.mediaDevices.enumerateDevices(); }catch(_){}
+  const outs=devs.filter(d=>d.kind==='audiooutput');
+  const cur=sel.value || localStorage.getItem('tt_gemoutput') || '';
+  sel.innerHTML='<option value="">🔊 系統預設輸出</option>' + outs.map((d,i)=>{
+    const label=d.label || ('輸出裝置 '+(i+1));
+    return `<option value="${d.deviceId}">${label}</option>`;
+  }).join('');
+  if([...sel.options].some(o=>o.value===cur)) sel.value=cur;
+  if(notify) toast(outs.length? '已更新輸出裝置清單' : '尚無可選裝置，請先允許麥克風權限以顯示名稱');
+}
+function applyGemSink(){
+  const sel=$('gem-output'); if(!sel) return;
+  const id=sel.value; localStorage.setItem('tt_gemoutput', id);
+  if(gemPlayCtx && typeof gemPlayCtx.setSinkId==='function'){
+    gemPlayCtx.setSinkId(id).catch(e=>{ console.warn('setSinkId 失敗', e); });
+  }else if(id && gemPlayCtx){
+    toast('此瀏覽器不支援切換輸出裝置（請用較新版 Chrome／Edge）','err');
+  }
+}
 function playGemPCM(int16, rate){
-  if(!gemPlayCtx) gemPlayCtx=new (window.AudioContext||window.webkitAudioContext)();
+  if(!gemPlayCtx){ gemPlayCtx=new (window.AudioContext||window.webkitAudioContext)(); applyGemSink(); }
   const f32=new Float32Array(int16.length);
   for(let i=0;i<int16.length;i++) f32[i]=int16[i]/32768;
   const buf=gemPlayCtx.createBuffer(1, f32.length, rate);
